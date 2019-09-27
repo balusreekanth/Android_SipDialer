@@ -106,7 +106,7 @@ static pj_status_t opus_sdp_on_tx_msg(pjsip_tx_data *tdata)
                 new_value.ptr = (char*) pj_pool_alloc(tdata->pool, 20);
                 new_value.slen = pj_ansi_snprintf(new_value.ptr, 20, "%.*s%.*s",
                                                                                                                 found_opus - opus_attr->value.ptr, opus_attr->value.ptr,
-                                                                                                                STR_OPUS_RFC_FMT.slen, STR_OPUS_RFC_FMT.ptr);
+                                                                                                                (int)STR_OPUS_RFC_FMT.slen, STR_OPUS_RFC_FMT.ptr);
                 opus_attr->value = new_value;
                 tdata->msg->body = new_body;
             }
@@ -142,11 +142,8 @@ PJ_DECL(pj_status_t) pjsip_opus_sdp_rewriter_init(unsigned target_clock_rate) {
     if(target_clock_rate > 0 && target_clock_rate <= 48000){
         pjopus_internal_clockrate = target_clock_rate;
     }else{
-        pjopus_internal_clockrate = 16000;
+        pjopus_internal_clockrate = 48000;
     }
-    if(target_clock_rate != 48000){
-        return pjsip_endpt_register_module(pjsua_get_pjsip_endpt(),
+    return pjsip_endpt_register_module(pjsua_get_pjsip_endpt(),
                             &pjsua_opus_sdp_rewriter);
-    }
-    return PJ_SUCCESS;
 }

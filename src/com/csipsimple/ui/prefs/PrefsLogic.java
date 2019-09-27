@@ -240,11 +240,13 @@ public class PrefsLogic {
                 }
                 
                 if(!pfw.isAdvancedUser()) {
-                    
+
+                    pfh.hidePreference(NWK_NAT_TRAVERSAL_KEY, SipConfigManager.ICE_AGGRESSIVE);
                     pfh.hidePreference(NWK_NAT_TRAVERSAL_KEY, SipConfigManager.ENABLE_TURN);
                     pfh.hidePreference(NWK_NAT_TRAVERSAL_KEY, SipConfigManager.TURN_SERVER);
                     pfh.hidePreference(NWK_NAT_TRAVERSAL_KEY, SipConfigManager.TURN_USERNAME);
                     pfh.hidePreference(NWK_NAT_TRAVERSAL_KEY, SipConfigManager.TURN_PASSWORD);
+                    pfh.hidePreference(NWK_NAT_TRAVERSAL_KEY, SipConfigManager.TURN_TRANSPORT);
                     
                     pfh.hidePreference(NWK_TRANSPORT_KEY, SipConfigManager.ENABLE_TCP);
                     pfh.hidePreference(NWK_TRANSPORT_KEY, SipConfigManager.ENABLE_UDP);

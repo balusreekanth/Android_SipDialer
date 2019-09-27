@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2010-2013 Regis Montoya (aka r3gis - www.r3gis.fr)
+ * Copyright (C) 2010-2015 Regis Montoya (aka r3gis - www.r3gis.fr)
  * Copyright (C) 2012-2013 Dennis Guse (http://dennisguse.de)
+ * Copyright (C) 2015 Antonio Eugenio Burriel
  * This file is part of CSipSimple.
  *
  *  CSipSimple is free software: you can redistribute it and/or modify
@@ -45,7 +46,6 @@ import com.csipsimple.api.SipManager;
 import com.csipsimple.api.SipManager.PresenceStatus;
 import com.csipsimple.api.SipProfile;
 import com.csipsimple.api.SipProfileState;
-import com.csipsimple.api.SipUri;
 import com.csipsimple.api.SipUri.ParsedSipContactInfos;
 import com.csipsimple.pjsip.earlylock.EarlyLockModule;
 import com.csipsimple.pjsip.player.IPlayerHandler;
@@ -73,10 +73,13 @@ import com.csipsimple.wizards.WizardUtils;
 import org.pjsip.pjsua.SWIGTYPE_p_pj_stun_auth_cred;
 import org.pjsip.pjsua.csipsimple_config;
 import org.pjsip.pjsua.dynamic_factory;
+import org.pjsip.pjsua.pj_ice_sess_options;
 import org.pjsip.pjsua.pj_pool_t;
 import org.pjsip.pjsua.pj_qos_params;
 import org.pjsip.pjsua.pj_str_t;
+import org.pjsip.pjsua.pj_turn_tp_type;
 import org.pjsip.pjsua.pjmedia_srtp_use;
+import org.pjsip.pjsua.pjsip_ssl_method;
 import org.pjsip.pjsua.pjsip_timer_setting;
 import org.pjsip.pjsua.pjsip_tls_setting;
 import org.pjsip.pjsua.pjsip_transport_type_e;
@@ -310,6 +313,7 @@ public class PjSipService {
                 Map<String, DynCodecInfos> availableCodecs = ExtraPlugins.getDynCodecPlugins(
                         service, SipManager.ACTION_GET_EXTRA_CODECS);
                 dynamic_factory[] cssCodecs = cssCfg.getExtra_aud_codecs();
+                
                 int i = 0;
                 for (Entry<String, DynCodecInfos> availableCodec : availableCodecs.entrySet()) {
                     DynCodecInfos dyn = availableCodec.getValue();
@@ -440,8 +444,8 @@ public class PjSipService {
                     }
                 }
                 // STUN
-                int isStunEnabled = prefsWrapper.getStunEnabled();
-                if (isStunEnabled == 1) {
+                boolean isStunEnabled = prefsWrapper.getPreferenceBooleanValue(SipConfigManager.ENABLE_STUN);
+                if (isStunEnabled) {
                     String[] servers = prefsWrapper.getPreferenceStringValue(
                             SipConfigManager.STUN_SERVER).split(",");
                     cfg.setStun_srv_cnt(servers.length);
@@ -452,9 +456,8 @@ public class PjSipService {
                         stunServersCount++;
                     }
                     cfg.setStun_srv(stunServers);
-                    cfg.setStun_map_use_stun2(prefsWrapper
-                            .getPreferenceBooleanValue(SipConfigManager.ENABLE_STUN2) ? pjsuaConstants.PJ_TRUE
-                            : pjsuaConstants.PJ_FALSE);
+                    cfg.setStun_map_use_stun2(boolToPjsuaConstant(prefsWrapper
+                            .getPreferenceBooleanValue(SipConfigManager.ENABLE_STUN2)));
                 }
 
                 // LOGGING CONFIG
@@ -481,15 +484,15 @@ public class PjSipService {
                 // Echo cancellation
                 mediaCfg.setEc_tail_len(prefsWrapper.getEchoCancellationTail());
                 int echoMode = prefsWrapper.getPreferenceIntegerValue(SipConfigManager.ECHO_MODE);
-                long clockRate = prefsWrapper.getClockRate();
+                long clockRate = prefsWrapper.getClockRate(mediaManager);
                 if (clockRate > 16000 && echoMode == SipConfigManager.ECHO_MODE_WEBRTC_M) {
                     // WebRTC mobile does not allow higher that 16kHz for now
                     // TODO : warn user about this point
                     echoMode = SipConfigManager.ECHO_MODE_SIMPLE;
                 }
                 mediaCfg.setEc_options(echoMode);
-                mediaCfg.setNo_vad(prefsWrapper
-                        .getPreferenceBooleanValue(SipConfigManager.ENABLE_VAD) ? 0 : 1);
+                mediaCfg.setNo_vad(boolToPjsuaConstant(!prefsWrapper
+                        .getPreferenceBooleanValue(SipConfigManager.ENABLE_VAD)));
                 mediaCfg.setQuality(prefsWrapper.getMediaQuality());
                 mediaCfg.setClock_rate(clockRate);
                 mediaCfg.setAudio_frame_ptime(prefsWrapper
@@ -506,16 +509,22 @@ public class PjSipService {
                     // Global thread count is 0, so don't use sip one anyway
                     hasOwnIoQueue = false;
                 }
-                mediaCfg.setHas_ioqueue(hasOwnIoQueue ? 1 : 0);
+                mediaCfg.setHas_ioqueue(boolToPjsuaConstant(hasOwnIoQueue));
 
                 // ICE
-                mediaCfg.setEnable_ice(prefsWrapper.getIceEnabled());
-
+                boolean iceEnabled = prefsWrapper.getPreferenceBooleanValue(SipConfigManager.ENABLE_ICE);
+                mediaCfg.setEnable_ice(boolToPjsuaConstant(iceEnabled));
+                if(iceEnabled) {
+                    pj_ice_sess_options iceOpts = mediaCfg.getIce_opt();
+                    boolean aggressiveIce = prefsWrapper.getPreferenceBooleanValue(SipConfigManager.ICE_AGGRESSIVE);
+                    iceOpts.setAggressive(boolToPjsuaConstant(aggressiveIce));
+                }
+                
                 // TURN
-                int isTurnEnabled = prefsWrapper.getTurnEnabled();
-                if (isTurnEnabled == 1) {
+                boolean isTurnEnabled = prefsWrapper.getPreferenceBooleanValue(SipConfigManager.ENABLE_TURN);
+                if (isTurnEnabled) {
                     SWIGTYPE_p_pj_stun_auth_cred creds = mediaCfg.getTurn_auth_cred();
-                    mediaCfg.setEnable_turn(isTurnEnabled);
+                    mediaCfg.setEnable_turn(boolToPjsuaConstant(isTurnEnabled));
                     mediaCfg.setTurn_server(pjsua.pj_str_copy(prefsWrapper.getTurnServer()));
                     pjsua.set_turn_credentials(
                             pjsua.pj_str_copy(prefsWrapper
@@ -525,6 +534,23 @@ public class PjSipService {
                             pjsua.pj_str_copy("*"), creds);
                     // Normally this step is useless as manipulating a pointer in C memory at this point, but in case this changes reassign
                     mediaCfg.setTurn_auth_cred(creds);
+                    int turnTransport = prefsWrapper.getPreferenceIntegerValue(SipConfigManager.TURN_TRANSPORT);
+                    if(turnTransport != 0) {
+                        switch (turnTransport) {
+                            case 1:
+                                mediaCfg.setTurn_conn_type(pj_turn_tp_type.PJ_TURN_TP_UDP);
+                                break;
+                            case 2:
+                                mediaCfg.setTurn_conn_type(pj_turn_tp_type.PJ_TURN_TP_TCP);
+                                break;
+                            case 3:
+                                mediaCfg.setTurn_conn_type(pj_turn_tp_type.PJ_TURN_TP_TLS);
+                                break;
+                            default:
+                                break;
+                        }
+                    }
+                    //mediaCfg.setTurn_conn_type(value);
                 } else {
                     mediaCfg.setEnable_turn(pjsua.PJ_FALSE);
                 }
@@ -743,7 +769,8 @@ public class PjSipService {
                     .getPreferenceBooleanValue(SipConfigManager.TLS_VERIFY_CLIENT);
             tlsSetting.setVerify_client(checkClient ? 1 : 0);
 
-            tlsSetting.setMethod(prefsWrapper.getTLSMethod());
+            tlsSetting.setMethod(pjsip_ssl_method.swigToEnum(prefsWrapper.getTLSMethod()));
+            tlsSetting.setProto(0);
             boolean checkServer = prefsWrapper
                     .getPreferenceBooleanValue(SipConfigManager.TLS_VERIFY_SERVER);
             tlsSetting.setVerify_server(checkServer ? 1 : 0);
@@ -1637,21 +1664,22 @@ public class PjSipService {
             return false;
         }
 
+
+        SipProfileState profileState = getProfileState(account);
+        
         // If local account -- Ensure we are not deleting, because this would be
         // invalid
-        if (account.wizard.equalsIgnoreCase(WizardUtils.LOCAL_WIZARD_TAG)) {
+        if (profileState.getWizard().equalsIgnoreCase(WizardUtils.LOCAL_WIZARD_TAG)) {
             if (renew == 0) {
                 return false;
             }
         }
 
-        SipProfileState profileState = getProfileState(account);
-
         // In case of already added, we have to act finely
         // If it's local we can just consider that we have to re-add account
         // since it will actually just touch the account with a modify
         if (profileState != null && profileState.isAddedToStack()
-                && !account.wizard.equalsIgnoreCase(WizardUtils.LOCAL_WIZARD_TAG)) {
+                && !profileState.getWizard().equalsIgnoreCase(WizardUtils.LOCAL_WIZARD_TAG)) {
             // The account is already there in accounts list
             service.getContentResolver().delete(
                     ContentUris.withAppendedId(SipProfile.ACCOUNT_STATUS_URI, account.id), null,
@@ -1855,26 +1883,9 @@ public class PjSipService {
         }
 
         // Check integrity of callee field
-
-        ParsedSipContactInfos finalCallee = SipUri.parseSipContact(callee);
-
-        if (TextUtils.isEmpty(finalCallee.domain) ||
-                TextUtils.isEmpty(finalCallee.scheme)) {
-            Log.d(THIS_FILE, "default acc : " + finalAccountId);
-            account = service.getAccount((int) finalAccountId);
-        }
-
-        if (TextUtils.isEmpty(finalCallee.domain)) {
-            String defaultDomain = account.getDefaultDomain();
-            finalCallee.domain = defaultDomain;
-        }
-        if (TextUtils.isEmpty(finalCallee.scheme)) {
-            if (!TextUtils.isEmpty(account.default_uri_scheme)) {
-                finalCallee.scheme = account.default_uri_scheme;
-            } else {
-                finalCallee.scheme = SipManager.PROTOCOL_SIP;
-            }
-        }
+        // Get real account information now
+        account = service.getAccount((int) finalAccountId);
+        ParsedSipContactInfos finalCallee = account.formatCalleeNumber(callee);
         String digitsToAdd = null;
         if (!TextUtils.isEmpty(finalCallee.userName) &&
                 (finalCallee.userName.contains(",") || finalCallee.userName.contains(";"))) {
@@ -1896,7 +1907,7 @@ public class PjSipService {
                 pjsipAccountId = pjsua.acc_find_for_outgoing(pjsua.pj_str_copy(finalCallee
                         .toString(false)));
             }
-            return new ToCall(pjsipAccountId, finalCallee.toString(false), digitsToAdd);
+            return new ToCall(pjsipAccountId, finalCallee.toString(true), digitsToAdd);
         }
 
         return null;
@@ -2363,6 +2374,8 @@ public class PjSipService {
         pjsua.vid_set_android_capturer((Object) window);
     }
 
-
+    private static int boolToPjsuaConstant(boolean v) {
+        return v ? pjsuaConstants.PJ_TRUE : pjsuaConstants.PJ_FALSE;
+    }
 
 }
